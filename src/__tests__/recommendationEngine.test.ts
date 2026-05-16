@@ -2,9 +2,9 @@ import { HEROES } from '@/data/heroData';
 import { activateSlot, confirmHeroSelection, initDraftState } from '@/lib/draftEngine';
 import { analyzeTeamGaps, generateRecommendation, scoreHeroForDraft } from '@/lib/recommendationEngine';
 
-const hero = (id: string) => {
-  const found = HEROES.find((item) => item.id === id);
-  if (!found) throw new Error(`missing hero ${id}`);
+const hero = (name: string) => {
+  const found = HEROES.find((item) => item.name === name || item.displayName === name);
+  if (!found) throw new Error(`missing hero ${name}`);
   return found;
 };
 
@@ -24,14 +24,14 @@ describe('recommendationEngine', () => {
   });
 
   test('陣容缺口檢測正確識別缺少前排', () => {
-    const gaps = analyzeTeamGaps([hero('ganjiang-moye'), hero('houyi')]);
+    const gaps = analyzeTeamGaps([hero('干将莫邪'), hero('后羿')]);
     expect(gaps.find((gap) => gap.id === 'frontline')?.status).toBe('danger');
   });
 
   test('克制評分正確計算（呂布 vs 張飛陣容）', () => {
-    const score = scoreHeroForDraft(hero('lvbu'), [], [hero('zhangfei')], HEROES);
+    const score = scoreHeroForDraft(hero('吕布'), [], [hero('张飞')], HEROES);
     expect(score.counterScore).toBeGreaterThanOrEqual(70);
-    expect(score.reasons.join('')).toContain('真傷');
+    expect(score.reasons.join('')).toMatch(/真[傷伤]/);
   });
 
   test('禁用英雄不出現在推薦結果中', () => {

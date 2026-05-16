@@ -129,6 +129,11 @@ input {
   animation: redPulse 1.8s ease-in-out infinite;
 }
 
+.slot-active {
+  animation: slotBlink 1s ease-in-out infinite;
+  box-shadow: 0 0 0 2px rgba(246, 201, 14, 0.65);
+}
+
 .recommendation-refresh {
   position: relative;
   overflow: hidden;
@@ -173,5 +178,15 @@ input {
   45%,
   100% {
     transform: translateX(420%);
+  }
+}
+
+@keyframes slotBlink {
+  0%,
+  100% {
+    border-color: rgba(246, 201, 14, 0.35);
+  }
+  50% {
+    border-color: rgba(246, 201, 14, 1);
   }
 }

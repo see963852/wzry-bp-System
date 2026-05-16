@@ -1,67 +1,78 @@
 import { HEROES } from '@/data/heroData';
-import { DRAFT_TURNS, executeDraftAction, getCurrentTurnInfo, initDraftState, isHeroAvailable, undoDraftAction } from '@/lib/draftEngine';
+import {
+  activateSlot,
+  canAdvanceToPick,
+  confirmHeroSelection,
+  getCurrentPickTurn,
+  getUsedHeroIds,
+  initDraftState,
+  isSlotClickable,
+  PICK_ORDER,
+  undoDraftAction,
+} from '@/lib/draftEngine';
 
 describe('draftEngine', () => {
-  test('初始化 DraftState 正確設置第一個操作為藍方 Ban', () => {
+  test('初始化 DraftState 建立固定 5 格 ban/pick', () => {
     const state = initDraftState(HEROES);
-    const turn = getCurrentTurnInfo(state);
-    expect(turn.team).toBe('blue');
-    expect(turn.type).toBe('ban');
-    expect(turn.phase).toBe('BAN_PHASE_1');
+    expect(state.phase).toBe('BAN_PHASE');
+    expect(state.blueBans).toEqual([null, null, null, null, null]);
+    expect(state.redBans).toEqual([null, null, null, null, null]);
+    expect(state.bluePicks).toEqual([null, null, null, null, null]);
+    expect(state.redPicks).toEqual([null, null, null, null, null]);
   });
 
-  test('Ban Phase 1 按正確順序輪換（藍→紅→藍→紅→藍→紅）', () => {
-    expect(DRAFT_TURNS.slice(0, 6).map((turn) => turn.team)).toEqual(['blue', 'red', 'blue', 'red', 'blue', 'red']);
-    expect(DRAFT_TURNS.slice(0, 6).every((turn) => turn.type === 'ban')).toBe(true);
-  });
-
-  test('Pick Phase 按正確順序輪換（藍→紅→紅→藍→藍→...）', () => {
-    expect(DRAFT_TURNS.slice(6, 11).map((turn) => turn.team)).toEqual(['blue', 'red', 'red', 'blue', 'blue']);
-    expect(DRAFT_TURNS.slice(15, 20).map((turn) => turn.team)).toEqual(['red', 'blue', 'blue', 'red', 'red']);
-  });
-
-  test('Ban Phase 2 在正確位置插入', () => {
-    expect(DRAFT_TURNS.slice(11, 15).map((turn) => `${turn.team}-${turn.type}-${turn.phase}`)).toEqual([
-      'blue-ban-BAN_PHASE_2',
-      'red-ban-BAN_PHASE_2',
-      'blue-ban-BAN_PHASE_2',
-      'red-ban-BAN_PHASE_2',
-    ]);
-  });
-
-  test('已 ban 英雄不出現在可選池', () => {
-    const state = executeDraftAction(initDraftState(HEROES), HEROES[0].id);
-    expect(isHeroAvailable(state, HEROES[0].id)).toBe(false);
-  });
-
-  test('已選英雄不出現在可選池', () => {
+  test('Ban 階段任意未填 ban 格可點擊，且雙方可 ban 同英雄', () => {
     let state = initDraftState(HEROES);
-    for (let index = 0; index < 6; index += 1) {
-      state = executeDraftAction(state, HEROES[index].id);
+    expect(isSlotClickable(state, 'red', 'ban', 4)).toBe(true);
+    state = activateSlot(state, 'blue', 'ban', 0);
+    state = confirmHeroSelection(state, HEROES[0].id);
+    state = activateSlot(state, 'red', 'ban', 0);
+    state = confirmHeroSelection(state, HEROES[0].id);
+    expect(state.blueBans[0]).toBe(HEROES[0].id);
+    expect(state.redBans[0]).toBe(HEROES[0].id);
+  });
+
+  test('10 個 ban 格填滿後進入 Pick 階段', () => {
+    let state = initDraftState(HEROES);
+    for (let index = 0; index < 5; index += 1) {
+      state = confirmHeroSelection(activateSlot(state, 'blue', 'ban', index), HEROES[index].id);
+      state = confirmHeroSelection(activateSlot(state, 'red', 'ban', index), HEROES[index + 5].id);
     }
-    state = executeDraftAction(state, HEROES[6].id);
-    expect(isHeroAvailable(state, HEROES[6].id)).toBe(false);
+    expect(canAdvanceToPick(state)).toBe(true);
+    expect(state.phase).toBe('PICK_PHASE');
+    expect(getCurrentPickTurn(state)).toEqual(PICK_ORDER[0]);
+  });
+
+  test('Pick 階段只能點擊當前輪到的格子', () => {
+    let state = initDraftState(HEROES);
+    for (let index = 0; index < 5; index += 1) {
+      state = confirmHeroSelection(activateSlot(state, 'blue', 'ban', index), HEROES[index].id);
+      state = confirmHeroSelection(activateSlot(state, 'red', 'ban', index), HEROES[index + 5].id);
+    }
+    expect(isSlotClickable(state, 'blue', 'pick', 0)).toBe(true);
+    expect(isSlotClickable(state, 'red', 'pick', 0)).toBe(false);
   });
 
   test('Undo 正確還原上一個操作', () => {
-    const firstHero = HEROES[0].id;
-    const state = executeDraftAction(initDraftState(HEROES), firstHero);
+    let state = initDraftState(HEROES);
+    state = confirmHeroSelection(activateSlot(state, 'blue', 'ban', 0), HEROES[0].id);
     const undone = undoDraftAction(state);
-    expect(undone.blueBans).toEqual([]);
-    expect(undone.currentTurnIndex).toBe(0);
-    expect(isHeroAvailable(undone, firstHero)).toBe(true);
+    expect(undone.blueBans[0]).toBeNull();
+    expect(undone.actionHistory).toHaveLength(0);
   });
 
-  test('完整模擬一場 Draft（10 ban + 10 pick）狀態流轉正確', () => {
+  test('完整模擬一場排位 BP 狀態流轉正確', () => {
     let state = initDraftState(HEROES);
-    for (let index = 0; index < 20; index += 1) {
-      state = executeDraftAction(state, HEROES[index].id);
+    for (let index = 0; index < 5; index += 1) {
+      state = confirmHeroSelection(activateSlot(state, 'blue', 'ban', index), HEROES[index].id);
+      state = confirmHeroSelection(activateSlot(state, 'red', 'ban', index), HEROES[index + 5].id);
+    }
+    for (let index = 0; index < PICK_ORDER.length; index += 1) {
+      const turn = getCurrentPickTurn(state);
+      expect(turn).toEqual(PICK_ORDER[index]);
+      state = confirmHeroSelection(activateSlot(state, turn!.team, 'pick', turn!.slotIndex), HEROES[index + 10].id);
     }
     expect(state.isComplete).toBe(true);
-    expect(state.blueBans).toHaveLength(5);
-    expect(state.redBans).toHaveLength(5);
-    expect(state.bluePicks).toHaveLength(5);
-    expect(state.redPicks).toHaveLength(5);
-    expect(state.actionHistory).toHaveLength(20);
+    expect(getUsedHeroIds(state).size).toBe(20);
   });
 });

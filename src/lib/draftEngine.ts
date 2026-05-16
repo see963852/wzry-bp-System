@@ -1,132 +1,216 @@
-import type { BanPickTurn, DraftAction, DraftState, Hero, Phase } from '@/types';
+import type { BanPickTurn, DraftAction, DraftActionType, DraftSlot, DraftState, Hero, Team } from '@/types';
 
-export const DRAFT_TURNS: BanPickTurn[] = [
-  { index: 0, team: 'blue', type: 'ban', phase: 'BAN_PHASE_1', label: '藍方 Ban 1' },
-  { index: 1, team: 'red', type: 'ban', phase: 'BAN_PHASE_1', label: '紅方 Ban 1' },
-  { index: 2, team: 'blue', type: 'ban', phase: 'BAN_PHASE_1', label: '藍方 Ban 2' },
-  { index: 3, team: 'red', type: 'ban', phase: 'BAN_PHASE_1', label: '紅方 Ban 2' },
-  { index: 4, team: 'blue', type: 'ban', phase: 'BAN_PHASE_1', label: '藍方 Ban 3' },
-  { index: 5, team: 'red', type: 'ban', phase: 'BAN_PHASE_1', label: '紅方 Ban 3' },
-  { index: 6, team: 'blue', type: 'pick', phase: 'PICK_PHASE', label: '藍方 Pick 1' },
-  { index: 7, team: 'red', type: 'pick', phase: 'PICK_PHASE', label: '紅方 Pick 1' },
-  { index: 8, team: 'red', type: 'pick', phase: 'PICK_PHASE', label: '紅方 Pick 2' },
-  { index: 9, team: 'blue', type: 'pick', phase: 'PICK_PHASE', label: '藍方 Pick 2' },
-  { index: 10, team: 'blue', type: 'pick', phase: 'PICK_PHASE', label: '藍方 Pick 3' },
-  { index: 11, team: 'blue', type: 'ban', phase: 'BAN_PHASE_2', label: '藍方 Ban 4' },
-  { index: 12, team: 'red', type: 'ban', phase: 'BAN_PHASE_2', label: '紅方 Ban 4' },
-  { index: 13, team: 'blue', type: 'ban', phase: 'BAN_PHASE_2', label: '藍方 Ban 5' },
-  { index: 14, team: 'red', type: 'ban', phase: 'BAN_PHASE_2', label: '紅方 Ban 5' },
-  { index: 15, team: 'red', type: 'pick', phase: 'PICK_PHASE', label: '紅方 Pick 3' },
-  { index: 16, team: 'blue', type: 'pick', phase: 'PICK_PHASE', label: '藍方 Pick 4' },
-  { index: 17, team: 'blue', type: 'pick', phase: 'PICK_PHASE', label: '藍方 Pick 5' },
-  { index: 18, team: 'red', type: 'pick', phase: 'PICK_PHASE', label: '紅方 Pick 4' },
-  { index: 19, team: 'red', type: 'pick', phase: 'PICK_PHASE', label: '紅方 Pick 5' },
+const EMPTY_SLOTS = 5;
+
+export const PICK_ORDER: Array<{ team: Team; slotIndex: number }> = [
+  { team: 'blue', slotIndex: 0 },
+  { team: 'red', slotIndex: 0 },
+  { team: 'red', slotIndex: 1 },
+  { team: 'blue', slotIndex: 1 },
+  { team: 'blue', slotIndex: 2 },
+  { team: 'red', slotIndex: 2 },
+  { team: 'blue', slotIndex: 3 },
+  { team: 'blue', slotIndex: 4 },
+  { team: 'red', slotIndex: 3 },
+  { team: 'red', slotIndex: 4 },
 ];
 
-const completeTurn: BanPickTurn = {
-  index: DRAFT_TURNS.length,
-  team: 'blue',
-  type: 'pick',
-  phase: 'COMPLETE',
-  label: 'BP 已完成',
-};
+const createEmptySlots = () => Array<string | null>(EMPTY_SLOTS).fill(null);
 
-function derivePhase(currentTurnIndex: number): Phase {
-  return DRAFT_TURNS[currentTurnIndex]?.phase ?? 'COMPLETE';
+const cloneState = (state: DraftState): DraftState => ({
+  ...state,
+  blueBans: [...state.blueBans],
+  redBans: [...state.redBans],
+  bluePicks: [...state.bluePicks],
+  redPicks: [...state.redPicks],
+  actionHistory: [...state.actionHistory],
+  activeSlot: state.activeSlot ? { ...state.activeSlot } : null,
+});
+
+function getSlots(state: DraftState, team: Team, type: DraftActionType): Array<string | null> {
+  if (team === 'blue' && type === 'ban') return state.blueBans;
+  if (team === 'red' && type === 'ban') return state.redBans;
+  if (team === 'blue' && type === 'pick') return state.bluePicks;
+  return state.redPicks;
+}
+
+function setSlotValue(state: DraftState, slot: DraftSlot, heroId: string | null) {
+  getSlots(state, slot.team, slot.type)[slot.slotIndex] = heroId;
+}
+
+function isValidSlotIndex(slotIndex: number) {
+  return Number.isInteger(slotIndex) && slotIndex >= 0 && slotIndex < EMPTY_SLOTS;
 }
 
 export function initDraftState(heroPool: Hero[]): DraftState {
   return {
     heroPool,
-    blueBans: [],
-    redBans: [],
-    bluePicks: [],
-    redPicks: [],
+    blueBans: createEmptySlots(),
+    redBans: createEmptySlots(),
+    bluePicks: createEmptySlots(),
+    redPicks: createEmptySlots(),
+    phase: 'BAN_PHASE',
+    pickTurnIndex: 0,
     actionHistory: [],
-    currentTurnIndex: 0,
-    phase: 'BAN_PHASE_1',
     isComplete: false,
+    activeSlot: null,
   };
 }
 
-export function getCurrentTurnInfo(state: DraftState): BanPickTurn {
-  return DRAFT_TURNS[state.currentTurnIndex] ?? completeTurn;
+export function canAdvanceToPick(state: DraftState): boolean {
+  return state.blueBans.every(Boolean) && state.redBans.every(Boolean);
+}
+
+export function getCurrentPickTurn(state: DraftState): { team: Team; slotIndex: number } | null {
+  if (state.phase !== 'PICK_PHASE' || state.isComplete) return null;
+  return PICK_ORDER[state.pickTurnIndex] ?? null;
+}
+
+export function isSlotClickable(state: DraftState, team: Team, type: DraftActionType, slotIndex: number): boolean {
+  if (!isValidSlotIndex(slotIndex) || state.isComplete) return false;
+  const slots = getSlots(state, team, type);
+  if (slots[slotIndex] !== null) return false;
+
+  if (state.phase === 'BAN_PHASE') {
+    return type === 'ban';
+  }
+
+  if (state.phase === 'PICK_PHASE' && type === 'pick') {
+    const turn = getCurrentPickTurn(state);
+    return turn?.team === team && turn.slotIndex === slotIndex;
+  }
+
+  return false;
+}
+
+export function activateSlot(state: DraftState, team: Team, type: DraftActionType, slotIndex: number): DraftState {
+  if (!isSlotClickable(state, team, type, slotIndex)) return state;
+  return {
+    ...cloneState(state),
+    activeSlot: { team, type, slotIndex },
+  };
+}
+
+export function clearActiveSlot(state: DraftState): DraftState {
+  if (!state.activeSlot) return state;
+  return {
+    ...cloneState(state),
+    activeSlot: null,
+  };
+}
+
+export function getUsedHeroIds(state: DraftState): Set<string> {
+  return new Set(
+    [...state.blueBans, ...state.redBans, ...state.bluePicks, ...state.redPicks].filter((heroId): heroId is string => Boolean(heroId)),
+  );
 }
 
 export function isHeroAvailable(state: DraftState, heroId: string): boolean {
-  const used = new Set([...state.blueBans, ...state.redBans, ...state.bluePicks, ...state.redPicks]);
-  return state.heroPool.some((hero) => hero.id === heroId) && !used.has(heroId);
+  return state.heroPool.some((hero) => hero.id === heroId) && !getUsedHeroIds(state).has(heroId);
 }
 
-export function executeDraftAction(state: DraftState, heroId: string): DraftState {
-  const turn = getCurrentTurnInfo(state);
-  if (turn.phase === 'COMPLETE' || state.isComplete) {
-    return state;
-  }
-  if (!isHeroAvailable(state, heroId)) {
-    return state;
+export function isHeroSelectableForActiveSlot(state: DraftState, heroId: string, disabledHeroes: string[] = []): boolean {
+  const activeSlot = state.activeSlot;
+  if (!activeSlot || disabledHeroes.includes(heroId)) return false;
+  if (!state.heroPool.some((hero) => hero.id === heroId)) return false;
+
+  if (activeSlot.type === 'ban') {
+    const ownBans = getSlots(state, activeSlot.team, 'ban');
+    return !ownBans.includes(heroId);
   }
 
-  const nextState: DraftState = {
-    ...state,
-    blueBans: [...state.blueBans],
-    redBans: [...state.redBans],
-    bluePicks: [...state.bluePicks],
-    redPicks: [...state.redPicks],
-    actionHistory: [...state.actionHistory],
-  };
+  return isHeroAvailable(state, heroId);
+}
 
-  if (turn.type === 'ban') {
-    if (turn.team === 'blue') {
-      nextState.blueBans.push(heroId);
-    } else {
-      nextState.redBans.push(heroId);
-    }
-  } else if (turn.team === 'blue') {
-    nextState.bluePicks.push(heroId);
-  } else {
-    nextState.redPicks.push(heroId);
-  }
+export function confirmHeroSelection(state: DraftState, heroId: string): DraftState {
+  if (!state.activeSlot || state.isComplete) return state;
+  const activeSlot = state.activeSlot;
+  if (!isSlotClickable(state, activeSlot.team, activeSlot.type, activeSlot.slotIndex)) return clearActiveSlot(state);
+
+  const nextState = cloneState(state);
+  setSlotValue(nextState, activeSlot, heroId);
 
   const action: DraftAction = {
-    turnIndex: turn.index,
-    team: turn.team,
-    type: turn.type,
+    turnIndex: nextState.actionHistory.length,
+    team: activeSlot.team,
+    type: activeSlot.type,
+    slotIndex: activeSlot.slotIndex,
     heroId,
-    phase: turn.phase,
+    phase: state.phase,
+    pickTurnIndexBefore: state.pickTurnIndex,
     createdAt: new Date().toISOString(),
   };
+
   nextState.actionHistory.push(action);
-  nextState.currentTurnIndex = Math.min(state.currentTurnIndex + 1, DRAFT_TURNS.length);
-  nextState.phase = derivePhase(nextState.currentTurnIndex);
-  nextState.isComplete = nextState.currentTurnIndex >= DRAFT_TURNS.length;
+  nextState.activeSlot = null;
+
+  if (activeSlot.type === 'ban' && canAdvanceToPick(nextState)) {
+    nextState.phase = 'PICK_PHASE';
+    nextState.pickTurnIndex = 0;
+  }
+
+  if (activeSlot.type === 'pick') {
+    nextState.pickTurnIndex += 1;
+    if (nextState.pickTurnIndex >= PICK_ORDER.length) {
+      nextState.phase = 'COMPLETE';
+      nextState.isComplete = true;
+      nextState.activeSlot = null;
+    }
+  }
+
   return nextState;
 }
 
 export function undoDraftAction(state: DraftState): DraftState {
   const lastAction = state.actionHistory.at(-1);
-  if (!lastAction) {
-    return state;
+  if (!lastAction) return clearActiveSlot(state);
+
+  const nextState = cloneState(state);
+  setSlotValue(nextState, lastAction, null);
+  nextState.actionHistory = nextState.actionHistory.slice(0, -1);
+  nextState.activeSlot = null;
+  nextState.isComplete = false;
+  nextState.phase = lastAction.phase;
+  nextState.pickTurnIndex = lastAction.pickTurnIndexBefore;
+
+  if (lastAction.type === 'ban') {
+    nextState.phase = 'BAN_PHASE';
+    nextState.pickTurnIndex = 0;
   }
 
-  const removeLast = (items: string[]) => items.slice(0, -1);
-  const nextTurnIndex = Math.max(0, state.currentTurnIndex - 1);
-  const nextState: DraftState = {
-    ...state,
-    blueBans: [...state.blueBans],
-    redBans: [...state.redBans],
-    bluePicks: [...state.bluePicks],
-    redPicks: [...state.redPicks],
-    actionHistory: state.actionHistory.slice(0, -1),
-    currentTurnIndex: nextTurnIndex,
-    phase: derivePhase(nextTurnIndex),
-    isComplete: false,
-  };
-
-  if (lastAction.type === 'ban' && lastAction.team === 'blue') nextState.blueBans = removeLast(nextState.blueBans);
-  if (lastAction.type === 'ban' && lastAction.team === 'red') nextState.redBans = removeLast(nextState.redBans);
-  if (lastAction.type === 'pick' && lastAction.team === 'blue') nextState.bluePicks = removeLast(nextState.bluePicks);
-  if (lastAction.type === 'pick' && lastAction.team === 'red') nextState.redPicks = removeLast(nextState.redPicks);
-
   return nextState;
+}
+
+export function getCurrentTurnInfo(state: DraftState): BanPickTurn {
+  if (state.phase === 'BAN_PHASE') {
+    return {
+      index: state.actionHistory.length,
+      team: 'blue',
+      type: 'ban',
+      phase: 'BAN_PHASE',
+      slotIndex: state.blueBans.findIndex((heroId) => heroId === null),
+      label: `Ban 階段：藍方 ${state.blueBans.filter(Boolean).length}/5，紅方 ${state.redBans.filter(Boolean).length}/5`,
+    };
+  }
+
+  const pickTurn = getCurrentPickTurn(state);
+  if (pickTurn) {
+    return {
+      index: state.actionHistory.length,
+      team: pickTurn.team,
+      type: 'pick',
+      phase: 'PICK_PHASE',
+      slotIndex: pickTurn.slotIndex,
+      label: `${pickTurn.team === 'blue' ? '藍方' : '紅方'} Pick ${pickTurn.slotIndex + 1}`,
+    };
+  }
+
+  return {
+    index: state.actionHistory.length,
+    team: 'blue',
+    type: 'pick',
+    phase: 'COMPLETE',
+    slotIndex: -1,
+    label: 'BP 已完成',
+  };
 }

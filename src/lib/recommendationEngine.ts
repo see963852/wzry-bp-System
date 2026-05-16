@@ -7,34 +7,64 @@ import type {
   HeroScore,
   MechanicTag,
   Recommendation,
+  Role,
   Team,
   TeamCompletion,
   ThreatAssessment,
 } from '@/types';
-import { getCurrentTurnInfo, isHeroAvailable } from '@/lib/draftEngine';
+import { getCurrentPickTurn, isHeroAvailable } from '@/lib/draftEngine';
 import { validateCounterRelation } from '@/lib/counterValidator';
 
 const tierScore: Record<Hero['tier'], number> = { T0: 100, T1: 86, T2: 68, T3: 48 };
 
-const hasMechanic = (team: Hero[], mechanic: MechanicTag) => team.some((hero) => hero.mechanics.includes(mechanic));
+const ROLE_MAX: Record<Role, number> = {
+  support: 1,
+  marksman: 1,
+  mage: 2,
+  assassin: 2,
+  tank: 2,
+  fighter: 2,
+};
+
+const allRoles: Role[] = ['tank', 'fighter', 'assassin', 'mage', 'marksman', 'support'];
 
 const unique = <T>(items: T[]) => Array.from(new Set(items));
 
-export function getHeroesByIds(heroPool: Hero[], ids: string[]): Hero[] {
+export function getHeroRoles(hero: Hero): Role[] {
+  return hero.roles?.length ? hero.roles : [hero.role];
+}
+
+export function getHeroLanes(hero: Hero) {
+  return hero.lanes?.length ? hero.lanes : [hero.lane];
+}
+
+export function getHeroesByIds(heroPool: Hero[], ids: Array<string | null>): Hero[] {
   const map = new Map(heroPool.map((hero) => [hero.id, hero]));
   return ids.flatMap((id) => {
+    if (!id) return [];
     const hero = map.get(id);
     return hero ? [hero] : [];
   });
 }
 
+function countRoles(team: Hero[]): Map<Role, number> {
+  const roleCounts = new Map<Role, number>();
+  for (const hero of team) {
+    for (const role of getHeroRoles(hero)) {
+      roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1);
+    }
+  }
+  return roleCounts;
+}
+
 export function analyzeTeamGaps(team: Hero[]): CompositionGap[] {
+  const hasRole = (role: Role) => team.some((hero) => getHeroRoles(hero).includes(role));
   const gapSpecs: Array<{ id: string; label: string; expected: number; current: number; description: string }> = [
     {
       id: 'frontline',
       label: '前排',
       expected: 1,
-      current: team.filter((hero) => hero.role === 'tank' || hero.role === 'fighter' || hero.mechanics.includes('shield') || hero.mechanics.includes('engage')).length,
+      current: team.filter((hero) => getHeroRoles(hero).some((role) => role === 'tank' || role === 'fighter') || hero.mechanics.includes('shield') || hero.mechanics.includes('engage')).length,
       description: '承傷與視野佔位能力',
     },
     {
@@ -72,6 +102,13 @@ export function analyzeTeamGaps(team: Hero[]): CompositionGap[] {
       current: team.filter((hero) => hero.mechanics.includes('mobility')).length,
       description: '轉線、追擊與拉扯能力',
     },
+    {
+      id: 'core',
+      label: '輸出核心',
+      expected: 1,
+      current: Number(hasRole('marksman') || hasRole('mage') || hasRole('assassin')),
+      description: '穩定輸出或收割核心',
+    },
   ];
 
   return gapSpecs.map((gap) => ({
@@ -82,15 +119,15 @@ export function analyzeTeamGaps(team: Hero[]): CompositionGap[] {
 
 export function assessEnemyThreat(enemyTeam: Hero[], myTeam: Hero[]): ThreatAssessment {
   const scale = (value: number) => Math.min(100, Math.round((value / Math.max(1, enemyTeam.length)) * 100));
-  const myFrontline = myTeam.filter((hero) => hero.role === 'tank' || hero.role === 'fighter').length;
+  const myFrontline = myTeam.filter((hero) => getHeroRoles(hero).some((role) => role === 'tank' || role === 'fighter')).length;
 
   return {
     burst: scale(enemyTeam.filter((hero) => hero.mechanics.includes('burst')).length / 0.65),
     control: scale(enemyTeam.filter((hero) => hero.mechanics.includes('hard_cc') || hero.mechanics.includes('soft_cc')).length / 0.8),
-    durability: scale(enemyTeam.filter((hero) => hero.role === 'tank' || hero.role === 'fighter' || hero.mechanics.includes('shield')).length / 0.8),
+    durability: scale(enemyTeam.filter((hero) => getHeroRoles(hero).some((role) => role === 'tank' || role === 'fighter') || hero.mechanics.includes('shield')).length / 0.8),
     engage: scale(enemyTeam.filter((hero) => hero.mechanics.includes('engage')).length / 0.55),
     mobility: scale(enemyTeam.filter((hero) => hero.mechanics.includes('mobility') || hero.mechanics.includes('stealth')).length / 0.8),
-    scaling: Math.min(100, Math.round(enemyTeam.reduce((sum, hero) => sum + (hero.role === 'marksman' ? 22 : hero.tier === 'T0' ? 18 : 12), 0) + myFrontline * 4)),
+    scaling: Math.min(100, Math.round(enemyTeam.reduce((sum, hero) => sum + (getHeroRoles(hero).includes('marksman') ? 22 : hero.tier === 'T0' ? 18 : 12), 0) + myFrontline * 4)),
   };
 }
 
@@ -106,11 +143,13 @@ function scoreCounter(hero: Hero, enemyTeam: Hero[], heroPool: Hero[]): { score:
     return { score: softScore, reasons: softScore > 50 ? ['敵方弱點資料顯示可形成軟克制'] : ['暫無明確克制關係，依靠陣容與版本分補足'] };
   }
 
-  const validated = matched.map((relation) => validateCounterRelation({
-    relation,
-    sourceHero: hero,
-    targetHero: heroMap.get(relation.targetHeroId),
-  }));
+  const validated = matched.map((relation) =>
+    validateCounterRelation({
+      relation,
+      sourceHero: hero,
+      targetHero: heroMap.get(relation.targetHeroId),
+    }),
+  );
   const score = validated.reduce((sum, result) => sum + result.confidence, 0) / validated.length;
   return {
     score,
@@ -120,17 +159,31 @@ function scoreCounter(hero: Hero, enemyTeam: Hero[], heroPool: Hero[]): { score:
 
 function scoreComposition(hero: Hero, myTeam: Hero[]): { score: number; reasons: string[] } {
   const gaps = analyzeTeamGaps(myTeam);
+  const roleCounts = countRoles(myTeam);
   const reasons: string[] = [];
   let score = 50;
 
+  for (const role of getHeroRoles(hero)) {
+    const current = roleCounts.get(role) ?? 0;
+    const max = ROLE_MAX[role] ?? 2;
+    if (current >= max) {
+      score -= role === 'support' || role === 'marksman' ? 28 : 16;
+      reasons.push(`${role} 已達建議上限`);
+    } else if (current === 0) {
+      score += 8;
+      reasons.push(`補足 ${role} 分工`);
+    }
+  }
+
   for (const gap of gaps.filter((item) => item.status === 'danger')) {
     const fills =
-      (gap.id === 'frontline' && (hero.role === 'tank' || hero.role === 'fighter' || hero.mechanics.includes('shield'))) ||
+      (gap.id === 'frontline' && (getHeroRoles(hero).some((role) => role === 'tank' || role === 'fighter') || hero.mechanics.includes('shield'))) ||
       (gap.id === 'control' && (hero.mechanics.includes('hard_cc') || hero.mechanics.includes('soft_cc'))) ||
       (gap.id === 'burst' && hero.mechanics.includes('burst')) ||
       (gap.id === 'sustain' && hero.mechanics.includes('sustain')) ||
       (gap.id === 'engage' && hero.mechanics.includes('engage')) ||
-      (gap.id === 'mobility' && hero.mechanics.includes('mobility'));
+      (gap.id === 'mobility' && hero.mechanics.includes('mobility')) ||
+      (gap.id === 'core' && getHeroRoles(hero).some((role) => role === 'marksman' || role === 'mage' || role === 'assassin'));
     if (fills) {
       score += 12;
       reasons.push(`補足${gap.label}`);
@@ -143,17 +196,17 @@ function scoreComposition(hero: Hero, myTeam: Hero[]): { score: number; reasons:
     reasons.push(`可配合 ${synergyHits.map((ally) => ally.displayName).join('、')}`);
   }
 
-  return { score: Math.min(100, score), reasons };
+  return { score: Math.min(100, Math.max(0, score)), reasons };
 }
 
 function scoreMechanism(hero: Hero, enemyTeam: Hero[], myTeam: Hero[]): { score: number; reasons: string[] } {
   let score = 45;
   const reasons: string[] = [];
-  if (hero.mechanics.includes('cleanse') && enemyTeam.some((enemy) => hasMechanic([enemy], 'hard_cc') || hasMechanic([enemy], 'soft_cc'))) {
+  if (hero.mechanics.includes('cleanse') && enemyTeam.some((enemy) => enemy.mechanics.includes('hard_cc') || enemy.mechanics.includes('soft_cc'))) {
     score += 24;
     reasons.push('解控可拆敵方控制鏈');
   }
-  if (hero.mechanics.includes('true_damage') && enemyTeam.some((enemy) => enemy.mechanics.includes('shield') || enemy.role === 'tank')) {
+  if (hero.mechanics.includes('true_damage') && enemyTeam.some((enemy) => enemy.mechanics.includes('shield') || getHeroRoles(enemy).includes('tank'))) {
     score += 25;
     reasons.push('真傷可處理護盾與前排');
   }
@@ -165,7 +218,7 @@ function scoreMechanism(hero: Hero, enemyTeam: Hero[], myTeam: Hero[]): { score:
     score += 14;
     reasons.push('消耗能壓低強開前血線');
   }
-  if (!myTeam.some((ally) => ally.role === hero.role)) {
+  if (getHeroRoles(hero).every((role) => !myTeam.some((ally) => getHeroRoles(ally).includes(role)))) {
     score += 8;
     reasons.push('角色分工更完整');
   }
@@ -176,7 +229,7 @@ export function scoreHeroForDraft(hero: Hero, myTeam: Hero[], enemyTeam: Hero[],
   const counter = scoreCounter(hero, enemyTeam, heroPool);
   const composition = scoreComposition(hero, myTeam);
   const mechanism = scoreMechanism(hero, enemyTeam, myTeam);
-  const metaScore = Math.min(100, tierScore[hero.tier] * 0.7 + hero.winRate * 100 * 0.3 + hero.pickRate * 70);
+  const metaScore = Math.min(100, tierScore[hero.tier] * 0.7 + hero.winRate * 100 * 0.3 + hero.pickRate * 70 + (hero.banRate ?? 0) * 35);
   const totalScore = counter.score * 0.35 + composition.score * 0.25 + mechanism.score * 0.25 + metaScore * 0.15;
 
   return {
@@ -220,8 +273,8 @@ function buildTeamCompletion(myTeam: Hero[]): TeamCompletion {
       return 'shield';
     }) as MechanicTag[];
 
-  const roles = unique(myTeam.map((hero) => hero.role));
-  const missingRoles = (['tank', 'fighter', 'assassin', 'mage', 'marksman', 'support'] as const).filter((role) => !roles.includes(role));
+  const roles = unique(myTeam.flatMap((hero) => getHeroRoles(hero)));
+  const missingRoles = allRoles.filter((role) => !roles.includes(role));
   const missingCompositionTags = unique(myTeam.flatMap((hero) => hero.compositionTags)).length < 2 ? ['teamfight' as const] : [];
   const completenessScore = Math.round((gaps.filter((gap) => gap.status !== 'danger').length / gaps.length) * 100);
 
@@ -257,28 +310,42 @@ function predictEnemyPlans(enemyTeam: Hero[], myTeam: Hero[], availableHeroes: H
   });
 }
 
+function filterByRoleLimit(availableHeroes: Hero[], myTeam: Hero[]): Hero[] {
+  const myRoleCounts = countRoles(myTeam);
+  const filteredHeroes = availableHeroes.filter((hero) =>
+    getHeroRoles(hero).every((role) => {
+      const max = ROLE_MAX[role] ?? 2;
+      const current = myRoleCounts.get(role) ?? 0;
+      return current < max;
+    }),
+  );
+  return filteredHeroes.length > 0 ? filteredHeroes : availableHeroes;
+}
+
 export function generateRecommendation(state: DraftState, disabledHeroes: string[] = []): Recommendation {
-  const turn = getCurrentTurnInfo(state);
-  const forTeam: Team = turn.team === 'red' ? 'red' : 'blue';
+  const pickTurn = getCurrentPickTurn(state);
+  const activeTeam = state.activeSlot?.team ?? pickTurn?.team ?? 'blue';
+  const forTeam: Team = activeTeam;
   const myTeam = getHeroesByIds(state.heroPool, forTeam === 'blue' ? state.bluePicks : state.redPicks);
   const enemyTeam = getHeroesByIds(state.heroPool, forTeam === 'blue' ? state.redPicks : state.bluePicks);
   const disabled = new Set(disabledHeroes);
   const availableHeroes = state.heroPool.filter((hero) => isHeroAvailable(state, hero.id) && !disabled.has(hero.id));
+  const candidateHeroes = filterByRoleLimit(availableHeroes, myTeam);
 
-  const topPicks = availableHeroes
+  const topPicks = candidateHeroes
     .map((hero) => scoreHeroForDraft(hero, myTeam, enemyTeam, state.heroPool))
     .sort((a, b) => b.totalScore - a.totalScore)
     .slice(0, 5);
 
   return {
     forTeam,
-    mode: turn.team === 'red' ? 'predict_enemy' : 'pick_now',
+    mode: pickTurn?.team === 'red' ? 'predict_enemy' : 'pick_now',
     topPicks,
-    counterAnalysis: buildCounterAnalysis(enemyTeam, availableHeroes, state.heroPool),
+    counterAnalysis: buildCounterAnalysis(enemyTeam, candidateHeroes, state.heroPool),
     teamCompletion: buildTeamCompletion(myTeam),
     compositionGaps: analyzeTeamGaps(myTeam),
     threatAssessment: assessEnemyThreat(enemyTeam, myTeam),
-    enemyPredictions: turn.team === 'red' ? predictEnemyPlans(enemyTeam, myTeam, availableHeroes, state.heroPool) : [],
+    enemyPredictions: pickTurn?.team === 'red' ? predictEnemyPlans(enemyTeam, myTeam, candidateHeroes, state.heroPool) : [],
     generatedAt: new Date().toISOString(),
   };
 }

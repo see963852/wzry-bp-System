@@ -1,44 +1,38 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { Hero, HeroScore, Role } from '@/types';
-import { getCurrentTurnInfo, isHeroAvailable } from '@/lib/draftEngine';
-import { scoreHeroForDraft, getHeroesByIds } from '@/lib/recommendationEngine';
+import { getUsedHeroIds } from '@/lib/draftEngine';
+import type { Role } from '@/types';
 import { useDraftStore } from '@/store/draftStore';
 import { HeroCard } from '@/components/HeroCard';
-import { HeroPickModal } from '@/components/HeroPickModal';
 
 const roles: Array<'all' | Role> = ['all', 'tank', 'fighter', 'assassin', 'mage', 'marksman', 'support'];
 
+const roleLabel: Record<'all' | Role, string> = {
+  all: '全部',
+  tank: '坦克',
+  fighter: '戰士',
+  assassin: '刺客',
+  mage: '法師',
+  marksman: '射手',
+  support: '輔助',
+};
+
 export function HeroPool() {
-  const { draftState, heroPool, disabledHeroes, performAction } = useDraftStore();
+  const { draftState, heroPool, disabledHeroes } = useDraftStore();
   const [query, setQuery] = useState('');
   const [role, setRole] = useState<'all' | Role>('all');
-  const [selected, setSelected] = useState<HeroScore | null>(null);
-  const turn = getCurrentTurnInfo(draftState);
-
-  const myTeam = getHeroesByIds(heroPool, turn.team === 'blue' ? draftState.bluePicks : draftState.redPicks);
-  const enemyTeam = getHeroesByIds(heroPool, turn.team === 'blue' ? draftState.redPicks : draftState.bluePicks);
+  const usedHeroIds = getUsedHeroIds(draftState);
 
   const filtered = useMemo(() => {
     const lower = query.trim().toLowerCase();
     return heroPool.filter((hero) => {
-      const roleMatch = role === 'all' || hero.role === role;
+      const heroRoles = hero.roles ?? [hero.role];
+      const roleMatch = role === 'all' || heroRoles.includes(role);
       const queryMatch = !lower || hero.name.toLowerCase().includes(lower) || hero.displayName.toLowerCase().includes(lower);
       return roleMatch && queryMatch;
     });
   }, [heroPool, query, role]);
-
-  function openHero(hero: Hero) {
-    if (!isHeroAvailable(draftState, hero.id) || disabledHeroes.includes(hero.id) || draftState.isComplete) return;
-    setSelected(scoreHeroForDraft(hero, myTeam, enemyTeam, heroPool));
-  }
-
-  function confirmHero() {
-    if (!selected) return;
-    performAction(selected.heroId);
-    setSelected(null);
-  }
 
   return (
     <section className="rounded-md border border-white/10 bg-[#1a1d27] p-4">
@@ -52,22 +46,16 @@ export function HeroPool() {
         <div className="flex flex-wrap gap-2">
           {roles.map((item) => (
             <button key={item} type="button" className={role === item ? 'primary-pill' : 'secondary-pill'} onClick={() => setRole(item)}>
-              {item === 'all' ? '全部' : item}
+              {roleLabel[item]}
             </button>
           ))}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
         {filtered.map((hero) => (
-          <HeroCard
-            key={hero.id}
-            hero={hero}
-            disabled={!isHeroAvailable(draftState, hero.id) || disabledHeroes.includes(hero.id) || draftState.isComplete}
-            onClick={() => openHero(hero)}
-          />
+          <HeroCard key={hero.id} hero={hero} disabled={usedHeroIds.has(hero.id) || disabledHeroes.includes(hero.id)} />
         ))}
       </div>
-      <HeroPickModal score={selected} actionLabel={turn.type === 'ban' ? '禁用' : '選用'} onConfirm={confirmHero} onClose={() => setSelected(null)} />
     </section>
   );
 }

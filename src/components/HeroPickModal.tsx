@@ -1,59 +1,114 @@
 'use client';
 
 import { X } from 'lucide-react';
-import type { HeroScore } from '@/types';
+import { useEffect, useMemo, useState } from 'react';
+import { isHeroSelectableForActiveSlot } from '@/lib/draftEngine';
+import type { DraftActionType, DraftState, Role, Team } from '@/types';
+import { HeroCard } from '@/components/HeroCard';
 
-interface HeroPickModalProps {
-  score: HeroScore | null;
-  actionLabel: string;
-  onConfirm: () => void;
+interface HeroSelectModalProps {
+  isOpen: boolean;
+  mode: DraftActionType;
+  team: Team;
+  draftState: DraftState;
+  disabledHeroes: string[];
+  onSelect: (heroId: string) => void;
   onClose: () => void;
 }
 
-export function HeroPickModal({ score, actionLabel, onConfirm, onClose }: HeroPickModalProps) {
-  if (!score) return null;
-  const { hero } = score;
+const roles: Array<'all' | Role> = ['all', 'tank', 'fighter', 'assassin', 'mage', 'marksman', 'support'];
+
+const roleLabel: Record<'all' | Role, string> = {
+  all: '全部',
+  tank: '坦克',
+  fighter: '戰士',
+  assassin: '刺客',
+  mage: '法師',
+  marksman: '射手',
+  support: '輔助',
+};
+
+export function HeroPickModal({ isOpen, mode, team, draftState, disabledHeroes, onSelect, onClose }: HeroSelectModalProps) {
+  const [query, setQuery] = useState('');
+  const [role, setRole] = useState<'all' | Role>('all');
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setQuery('');
+      setRole('all');
+    }
+  }, [isOpen]);
+
+  const filteredHeroes = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    return draftState.heroPool.filter((hero) => {
+      const heroRoles = hero.roles ?? [hero.role];
+      const matchesRole = role === 'all' || heroRoles.includes(role);
+      const matchesQuery = !keyword || hero.name.toLowerCase().includes(keyword) || hero.displayName.toLowerCase().includes(keyword);
+      return matchesRole && matchesQuery;
+    });
+  }, [draftState.heroPool, query, role]);
+
+  if (!isOpen || !draftState.activeSlot) return null;
+
+  const theme = team === 'blue' ? 'border-blue-team/70 text-blue-200' : 'border-red-team/70 text-red-200';
+  const title = `選擇要 ${mode === 'ban' ? 'Ban' : 'Pick'} 的英雄`;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
-      <div className="w-full max-w-md rounded-md border border-white/10 bg-[#1a1d27] p-5 shadow-2xl">
-        <div className="mb-4 flex items-start justify-between">
+    <div className="fixed inset-0 z-50 bg-black/70 p-4" onClick={onClose}>
+      <div
+        className={`mx-auto mt-6 flex max-h-[88vh] w-full max-w-5xl flex-col rounded-md border bg-[#1a1d27] shadow-2xl ${theme}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-white/10 p-4">
           <div>
-            <h3 className="text-lg font-bold text-white">{hero.displayName}</h3>
-            <p className="mt-1 text-sm text-zinc-400">{hero.summary}</p>
+            <h2 className="text-lg font-bold text-white">{title}</h2>
+            <p className="mt-1 text-sm text-zinc-400">{team === 'blue' ? '藍方' : '紅方'} · 第 {draftState.activeSlot.slotIndex + 1} 格</p>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="關閉">
             <X size={18} />
           </button>
         </div>
-        <div className="mb-4 flex flex-wrap gap-2">
-          {hero.mechanics.map((tag) => (
-            <span key={tag} className="rounded bg-white/10 px-2 py-1 text-xs text-zinc-200">
-              {tag}
-            </span>
-          ))}
-        </div>
-        <div className="mb-4 rounded-md bg-black/20 p-3">
-          <div className="mb-2 flex justify-between text-sm">
-            <span className="text-zinc-300">當前克制評分</span>
-            <span className="font-bold text-emerald-400">{score.totalScore}</span>
+
+        <div className="border-b border-white/10 p-4">
+          <input
+            className="mb-3 min-h-10 w-full rounded-md border border-white/10 bg-black/20 px-3 text-sm text-white outline-none focus:border-blue-team"
+            placeholder="搜尋英雄"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            {roles.map((item) => (
+              <button key={item} type="button" className={role === item ? 'primary-pill' : 'secondary-pill'} onClick={() => setRole(item)}>
+                {roleLabel[item]}
+              </button>
+            ))}
           </div>
-          <div className="h-2 overflow-hidden rounded bg-white/10">
-            <div className="h-full rounded bg-gradient-to-r from-emerald-500 via-yellow-400 to-red-500" style={{ width: `${score.totalScore}%` }} />
-          </div>
         </div>
-        <ul className="mb-5 space-y-1 text-sm text-zinc-300">
-          {score.reasons.map((reason) => (
-            <li key={reason}>• {reason}</li>
-          ))}
-        </ul>
-        <div className="flex justify-end gap-2">
-          <button type="button" className="secondary-button" onClick={onClose}>
-            取消
-          </button>
-          <button type="button" className="primary-button" onClick={onConfirm}>
-            確認{actionLabel}
-          </button>
+
+        <div className="grid flex-1 grid-cols-2 gap-3 overflow-y-auto p-4 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-6">
+          {filteredHeroes.map((hero) => {
+            const selectable = isHeroSelectableForActiveSlot(draftState, hero.id, disabledHeroes);
+            return (
+              <HeroCard
+                key={hero.id}
+                hero={hero}
+                disabled={!selectable}
+                onClick={() => {
+                  if (selectable) onSelect(hero.id);
+                }}
+              />
+            );
+          })}
         </div>
       </div>
     </div>

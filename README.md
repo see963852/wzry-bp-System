@@ -1,5 +1,27 @@
 # KOH Draft Advisor
 
+## 本地啟動方法（Windows 11）
+
+**方法一：雙擊一鍵啟動（推薦）**
+1. 雙擊項目根目錄的 `start.bat`
+2. 首次啟動會自動安裝依賴（約 1-2 分鐘）
+3. 瀏覽器會自動開啟 http://localhost:3000
+
+**方法二：命令行啟動**
+```bash
+npm install    # 首次需要
+npm run dev    # 開發模式（http://localhost:3000）
+```
+
+**正式模式（更快速度）**
+雙擊 `start-prod.bat`（首次會自動 Build）
+
+## Vercel 線上部署
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/see963852/wzry-bp-System)
+
+---
+
 王者榮耀陣容智能克制推薦系統。系統模擬 Ban/Pick 流程，根據敵方已選、我方陣容缺口、機制克制與版本強度，即時計算推薦英雄與備選應對。
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new)
